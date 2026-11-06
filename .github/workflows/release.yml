@@ -1,5 +1,5 @@
 
-name: Build and Push Docker Image
+name: Build and Deploy Node.js API
 
 on:
   push:
@@ -11,35 +11,108 @@ permissions:
   packages: write
 
 jobs:
-  docker:
+  release:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout source code
+      - name: Checkout Node.js source
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to GitHub Container Registry
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=ref,event=tag
-
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ghcr.io/narek97/nodejs-api:${{ github.ref_name }}
+
+      - name: Checkout GitOps repository
+        uses: actions/checkout@v4
+        with:
+          repository: Narek97/gitops-infrastructure
+          token: ${{ secrets.GITOPS_REPO_TOKEN }}
+          path: gitops
+          ref: main
+          persist-credentials: false
+
+      - name: Update dev image version
+        working-directory: gitops
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          python3 - "$VERSION" <<'PY'
+          import pathlib
+          import sys
+
+          version = sys.argv[1]
+          path = pathlib.Path(
+              "apps/nodejs-api/overlays/dev/kustomization.yaml"
+          )
+
+          content = path.read_text()
+          import re
+          content, count = re.subn(
+              r"(?m)^(\s*newTag:\s*).*$",
+              lambda m: m.group(1) + version,
+              content,
+          )
+          if count != 1:
+              raise SystemExit("Expected exactly one newTag")
+          path.write_text(content)
+          PY
+
+      - name: Update application version
+        working-directory: gitops
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          python3 - "$VERSION" <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          version = sys.argv[1]
+          path = pathlib.Path(
+              "apps/nodejs-api/overlays/dev/configmap.yaml"
+          )
+          content = path.read_text()
+          content, count = re.subn(
+              r"(?m)^(\s*APP_VERSION:\s*).*$",
+              lambda m: m.group(1) + version,
+              content,
+          )
+          if count != 1:
+              raise SystemExit("Expected exactly one APP_VERSION")
+          path.write_text(content)
+          PY
+
+      - name: Commit and push GitOps changes
+        working-directory: gitops
+        env:
+          GH_TOKEN: ${{ secrets.GITOPS_REPO_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add apps/nodejs-api/overlays/dev/
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          git commit -m "chore(dev): deploy nodejs-api ${VERSION}"
+
+          git -c http.extraheader="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)" \
+            push origin HEAD:main
