@@ -6,6 +6,7 @@ const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || "development";
 
 app.get("/", (req, res) => {
+    console.log("GET /", PORT);
     res.json({
         service: "nodejs-api",
         version: process.env.APP_VERSION || "local",
