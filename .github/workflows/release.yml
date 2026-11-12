@@ -1,102 +1,37 @@
-name: Release Node.js to dev
+
+name: Node.js Release
 
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
   contents: read
   packages: write
 
 concurrency:
-  group: nodejs-api-dev-gitops
+  group: nodejs-api-dev
   cancel-in-progress: false
 
 jobs:
-  build-and-release:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout app at release tag
-        uses: actions/checkout@v4
+  build:
+    uses: Narek97/devops-template/.github/workflows/build-image.yml@v1.0.0
+    with:
+      app: nodejs-api
+      dockerfile: Dockerfile
+      context: "."
+      node_version: "22"
+      run_tests: true
 
-      - name: Validate release tag
-        shell: bash
-        run: |
-          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Tag must look like v1.0.0'; exit 1; }
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-
-      - name: Test
-        run: |
-          npm ci
-          npm test
-
-      - name: Set image name
-        id: image
-        shell: bash
-        run: |
-          echo "repository=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-
-      - name: Configure Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.image.outputs.repository }}:${{ github.ref_name }}
-
-      - name: Checkout GitOps repo
-        uses: actions/checkout@v4
-        with:
-          repository: Narek97/argocd
-          ref: main
-          path: gitops
-          token: ${{ secrets.ARGOCD_REPO_TOKEN }}
-
-      - name: Update image version in dev values
-        env:
-          IMAGE_REPOSITORY: ${{ steps.image.outputs.repository }}
-          IMAGE_TAG: ${{ github.ref_name }}
-        run: |
-          python3 - <<'PY'
-          import os
-          import re
-          from pathlib import Path
-          path = Path('gitops/applications/nodejs-api/dev/values.yaml')
-          yaml = path.read_text()
-          pattern = r'(?m)^(image:\s*\n(?:[ \t]+[^\n]*\n)*?[ \t]+repository:\s*)[^\n]*(\n[ \t]+tag:\s*)[^\n]*'
-          # Match only the top-level image block; no other values are edited.
-          match = re.search(pattern, yaml)
-          if not match:
-              raise SystemExit('Could not find image.repository and image.tag in dev values')
-          replacement = (match.group(1) + os.environ['IMAGE_REPOSITORY'] +
-                         match.group(2) + '"' + os.environ['IMAGE_TAG'] + '"')
-          path.write_text(yaml[:match.start()] + replacement + yaml[match.end():])
-          PY
-
-      - name: Commit and push GitOps change
-        working-directory: gitops
-        shell: bash
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add applications/nodejs-api/dev/values.yaml
-          if git diff --cached --quiet; then
-            echo 'Already deployed'; exit 0
-          fi
-          git commit -m "chore(dev): deploy nodejs-api ${GITHUB_REF_NAME}"
-          git push origin HEAD:main
+  deploy:
+    needs: build
+    uses: Narek97/devops-template/.github/workflows/deploy-dev.yml@v1.0.0
+    with:
+      app: nodejs-api
+      gitops_repo: Narek97/argocd
+      values_path: applications/nodejs-api/dev/values.yaml
+      image_repository: ghcr.io/narek97/nodejs-api
+      image_tag: ${{ github.ref_name }}
+    secrets:
+      ARGOCD_REPO_TOKEN: ${{ secrets.ARGOCD_REPO_TOKEN }}
