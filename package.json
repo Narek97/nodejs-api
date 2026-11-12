@@ -1,0 +1,11 @@
+{
+  "name": "nodejs-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal Node.js API for GitOps deployment lab",
+  "engines": {"node": ">=22"},
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  }
+}
