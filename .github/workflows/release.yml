@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   build:
-    uses: Narek97/devops-template/.github/workflows/build-image.yml@v1.0.0
+    uses: Narek97/devops-template/.github/workflows/build-image.yml@v1.0.1
     with:
       app: nodejs-api
       dockerfile: Dockerfile
@@ -26,7 +26,7 @@ jobs:
 
   deploy:
     needs: build
-    uses: Narek97/devops-template/.github/workflows/deploy-dev.yml@v1.0.0
+    uses: Narek97/devops-template/.github/workflows/deploy-dev.yml@v1.0.1
     with:
       app: nodejs-api
       gitops_repo: Narek97/argocd
